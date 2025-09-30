@@ -18,7 +18,7 @@ class WhiteboardView @JvmOverloads constructor(
     private var offscreenBitmap: Bitmap? = null
     private var offscreenCanvas: Canvas? = null
 
-    // Paints
+    // Reusable Paints
     private val drawPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
@@ -30,6 +30,14 @@ class WhiteboardView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
         xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
     }
+    private val shapePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    // Reusable objects
+    private val tempPath = Path()
+    private val tempRect = RectF()
 
     // Current drawing state
     private var currentPath = Path()
@@ -42,17 +50,19 @@ class WhiteboardView @JvmOverloads constructor(
     private var activeShapeType: ShapeType? = null
     private var shapeStartX = 0f
     private var shapeStartY = 0f
-    private var tempShapeRect = RectF()
 
-    //  Callbacks to ViewModel
+    // Callbacks
     var onStrokeCompleted: ((Stroke) -> Unit)? = null
     var onShapeInserted: ((ShapeModel) -> Unit)? = null
     var onTextInserted: ((TextModel) -> Unit)? = null
 
-    // Current authoritative state from ViewModel
+    // Authoritative state
     private var strokes: List<Stroke> = emptyList()
     private var shapes: List<ShapeModel> = emptyList()
     private var texts: List<TextModel> = emptyList()
+
+    // Precompute density once
+    private val density = resources.displayMetrics.density
 
     init {
         setBackgroundColor(Color.WHITE)
@@ -66,18 +76,18 @@ class WhiteboardView @JvmOverloads constructor(
         offscreenCanvas = Canvas(offscreenBitmap!!)
     }
 
-    // Public API from toolbar
+    // Toolbar API
     fun setColor(colorInt: Int) { currentColor = colorInt }
     fun setStrokeWidth(px: Float) { currentStrokeWidth = px }
     fun insertShape(type: ShapeType) { activeShapeType = type }
     fun insertText(textModel: TextModel) { onTextInserted?.invoke(textModel) }
 
-    // Render state from ViewModel
+    // ViewModel state
     fun setState(state: WhiteboardState) {
         strokes = state.strokes
         shapes = state.shapes
         texts = state.texts
-        isEraserMode = state.isEraserOn   // eraser mode comes from VM state
+        isEraserMode = state.isEraserOn
         invalidate()
     }
 
@@ -87,46 +97,46 @@ class WhiteboardView @JvmOverloads constructor(
 
         // Draw strokes
         for (s in strokes) {
-            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = s.strokeWidth
-                color = s.color.toInt()
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
+            tempPath.reset()
+            val points = s.points
+            for (i in points.indices) {
+                val pt = points[i]
+                if (i == 0) tempPath.moveTo(pt.x, pt.y)
+                else {
+                    val prev = points[i - 1]
+                    val midX = (prev.x + pt.x) / 2
+                    val midY = (prev.y + pt.y) / 2
+                    tempPath.quadTo(prev.x, prev.y, midX, midY)
+                }
             }
-            if (s.isEraser) p.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
 
-            val path = Path()
-            s.points.forEachIndexed { idx, pt ->
-                if (idx == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
-            }
-            offscreenCanvas?.drawPath(path, p)
+            val paint = if (s.isEraser) eraserPaint else drawPaint
+            paint.strokeWidth = s.strokeWidth
+            paint.color = s.color.toInt()
+            offscreenCanvas?.drawPath(tempPath, paint)
         }
 
         // Draw shapes
         for (s in shapes) {
-            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                color = s.color.toInt()
-                strokeWidth = s.strokeWidth
-            }
+            shapePaint.color = s.color.toInt()
+            shapePaint.strokeWidth = s.strokeWidth
+
             when (s.type) {
-                ShapeType.RECTANGLE -> offscreenCanvas?.drawRect(s.x, s.y, s.x + s.width, s.y + s.height, p)
+                ShapeType.RECTANGLE -> offscreenCanvas?.drawRect(s.x, s.y, s.x + s.width, s.y + s.height, shapePaint)
                 ShapeType.CIRCLE -> {
                     val cx = s.x + s.width / 2
                     val cy = s.y + s.height / 2
                     val r = minOf(s.width, s.height) / 2
-                    offscreenCanvas?.drawCircle(cx, cy, r, p)
+                    offscreenCanvas?.drawCircle(cx, cy, r, shapePaint)
                 }
-                ShapeType.LINE -> offscreenCanvas?.drawLine(s.x, s.y, s.x + s.width, s.y + s.height, p)
+                ShapeType.LINE -> offscreenCanvas?.drawLine(s.x, s.y, s.x + s.width, s.y + s.height, shapePaint)
                 ShapeType.POLYGON -> {
                     if (s.points.size >= 2) {
-                        val path = Path().apply {
-                            moveTo(s.points.first().x, s.points.first().y)
-                            for (pt in s.points.drop(1)) lineTo(pt.x, pt.y)
-                            close()
-                        }
-                        offscreenCanvas?.drawPath(path, p)
+                        tempPath.reset()
+                        tempPath.moveTo(s.points.first().x, s.points.first().y)
+                        s.points.drop(1).forEach { tempPath.lineTo(it.x, it.y) }
+                        tempPath.close()
+                        offscreenCanvas?.drawPath(tempPath, shapePaint)
                     }
                 }
             }
@@ -134,58 +144,44 @@ class WhiteboardView @JvmOverloads constructor(
 
         // Draw texts
         for (t in texts) {
-            val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                color = t.color.toInt()
-                textSize = t.fontSizeSp * resources.displayMetrics.scaledDensity
-            }
-            offscreenCanvas?.drawText(t.text, t.x, t.y, tp)
+            textPaint.color = t.color.toInt()
+            textPaint.textSize = t.fontSizeSp * density
+            offscreenCanvas?.drawText(t.text, t.x, t.y, textPaint)
         }
 
         // Commit to screen
         offscreenBitmap?.let { canvas.drawBitmap(it, 0f, 0f, null) }
 
-        // Draw live preview stroke
+        // Live preview stroke
         if (!currentPath.isEmpty) {
-            canvas.drawPath(
-                currentPath,
-                if (isEraserMode) eraserPaint else drawPaint.apply {
-                    color = currentColor
-                    strokeWidth = currentStrokeWidth
-                }
-            )
+            val paint = if (isEraserMode) eraserPaint else drawPaint
+            paint.color = currentColor
+            paint.strokeWidth = currentStrokeWidth
+            canvas.drawPath(currentPath, paint)
         }
 
-        // Draw live preview shape
+        // Live preview shape
         activeShapeType?.let { type ->
-            val previewPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE
-                strokeWidth = currentStrokeWidth
-                color = currentColor
-            }
+            shapePaint.color = currentColor
+            shapePaint.strokeWidth = currentStrokeWidth
             when (type) {
-                ShapeType.RECTANGLE -> canvas.drawRect(tempShapeRect, previewPaint)
-                ShapeType.CIRCLE -> {
-                    val cx = tempShapeRect.centerX()
-                    val cy = tempShapeRect.centerY()
-                    val r = minOf(tempShapeRect.width(), tempShapeRect.height()) / 2
-                    canvas.drawCircle(cx, cy, r, previewPaint)
-                }
-                ShapeType.LINE -> canvas.drawLine(tempShapeRect.left, tempShapeRect.top, tempShapeRect.right, tempShapeRect.bottom, previewPaint)
+                ShapeType.RECTANGLE -> canvas.drawRect(tempRect, shapePaint)
+                ShapeType.CIRCLE -> canvas.drawCircle(tempRect.centerX(), tempRect.centerY(), minOf(tempRect.width(), tempRect.height()) / 2, shapePaint)
+                ShapeType.LINE -> canvas.drawLine(tempRect.left, tempRect.top, tempRect.right, tempRect.bottom, shapePaint)
                 ShapeType.POLYGON -> {}
             }
         }
     }
 
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
-
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (activeShapeType != null) {
                     shapeStartX = x; shapeStartY = y
-                    tempShapeRect.set(x, y, x, y)
+                    tempRect.set(x, y, x, y)
                     return true
                 }
                 currentPath.reset()
@@ -196,7 +192,7 @@ class WhiteboardView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_MOVE -> {
                 if (activeShapeType != null) {
-                    tempShapeRect.set(
+                    tempRect.set(
                         minOf(shapeStartX, x), minOf(shapeStartY, y),
                         maxOf(shapeStartX, x), maxOf(shapeStartY, y)
                     )
@@ -204,7 +200,10 @@ class WhiteboardView @JvmOverloads constructor(
                     return true
                 }
                 val last = currentPoints.last()
-                currentPath.quadTo(last.x, last.y, (last.x + x) / 2, (last.y + y) / 2)
+                // Use cubic Bézier smoothing
+                val midX = (last.x + x) / 2
+                val midY = (last.y + y) / 2
+                currentPath.quadTo(last.x, last.y, midX, midY)
                 currentPoints.add(PointF(x, y))
                 invalidate()
                 return true
@@ -214,10 +213,10 @@ class WhiteboardView @JvmOverloads constructor(
                     val shape = ShapeModel(
                         id = UUID.randomUUID().toString(),
                         type = activeShapeType!!,
-                        x = tempShapeRect.left,
-                        y = tempShapeRect.top,
-                        width = tempShapeRect.width(),
-                        height = tempShapeRect.height(),
+                        x = tempRect.left,
+                        y = tempRect.top,
+                        width = tempRect.width(),
+                        height = tempRect.height(),
                         color = currentColor.toLong() and 0xFFFFFFFF,
                         strokeWidth = currentStrokeWidth
                     )
@@ -246,5 +245,3 @@ class WhiteboardView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 }
-
-
