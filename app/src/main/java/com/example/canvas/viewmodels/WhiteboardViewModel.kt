@@ -1,73 +1,96 @@
 package com.example.canvas.viewmodels
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.example.canvas.models.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 class WhiteboardViewModel : ViewModel() {
 
     private val _state = MutableStateFlow(WhiteboardState())
     val state: StateFlow<WhiteboardState> = _state
 
+    // Full history stacks
+    private val undoStack: ArrayDeque<WhiteboardState> = ArrayDeque()
+    private val redoStack: ArrayDeque<WhiteboardState> = ArrayDeque()
+
+    // limit (tweakable, e.g. 50–100 states)
+    private val HISTORY_LIMIT = 50
+
+    // === Core ===
+    private fun pushState(newState: WhiteboardState) {
+        // Save current before change
+        undoStack.addLast(_state.value.copy())
+
+        // Enforce limit
+        if (undoStack.size > HISTORY_LIMIT) {
+            undoStack.removeFirst()
+        }
+
+        // Once a new action happens, redo is invalid
+        redoStack.clear()
+
+        _state.value = newState
+    }
+
     // User actions
     fun addStroke(stroke: Stroke) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(
-                strokes = _state.value.strokes + stroke
-            )
-        }
+        pushState(
+            _state.value.copy(strokes = _state.value.strokes + stroke)
+        )
     }
 
     fun addShape(shape: ShapeModel) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(
-                shapes = _state.value.shapes + shape
-            )
-        }
+        pushState(
+            _state.value.copy(shapes = _state.value.shapes + shape)
+        )
     }
 
     fun addText(text: TextModel) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(
-                texts = _state.value.texts + text
-            )
-        }
+        pushState(
+            _state.value.copy(texts = _state.value.texts + text)
+        )
     }
 
     fun deleteText(id: String) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(
-                texts = _state.value.texts.filterNot { it.id == id }
-            )
-        }
+        pushState(
+            _state.value.copy(texts = _state.value.texts.filterNot { it.id == id })
+        )
     }
 
     fun clearCanvas() {
-        viewModelScope.launch {
-            _state.value = WhiteboardState()
-        }
-    }
-
-    fun undo() {
-        viewModelScope.launch {
-            val current = _state.value
-            when {
-                current.strokes.isNotEmpty() -> _state.value =
-                    current.copy(strokes = current.strokes.dropLast(1))
-                current.shapes.isNotEmpty() -> _state.value =
-                    current.copy(shapes = current.shapes.dropLast(1))
-                current.texts.isNotEmpty() -> _state.value =
-                    current.copy(texts = current.texts.dropLast(1))
-            }
-        }
+        pushState(WhiteboardState())
     }
 
     fun enableEraser(enabled: Boolean) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isEraserOn = enabled)
+        pushState(_state.value.copy(isEraserOn = enabled))
+    }
+
+    // Undo / Redo
+    fun undo() {
+        if (undoStack.isNotEmpty()) {
+            val prev = undoStack.removeLast()
+            redoStack.addLast(_state.value.copy())
+
+            if (redoStack.size > HISTORY_LIMIT) {
+                redoStack.removeFirst()
+            }
+
+            _state.value = prev
+        }
+    }
+
+    fun redo() {
+        if (redoStack.isNotEmpty()) {
+            val next = redoStack.removeLast()
+            undoStack.addLast(_state.value.copy())
+
+            if (undoStack.size > HISTORY_LIMIT) {
+                undoStack.removeFirst()
+            }
+
+            _state.value = next
         }
     }
 }
+

@@ -61,5 +61,9 @@ class WhiteboardFragment : Fragment() {
         view.findViewById<View>(R.id.btnClear).setOnClickListener {
             viewModel.clearCanvas()
         }
+        view.findViewById<View>(R.id.btnRedo).setOnClickListener {
+            viewModel.redo()
+        }
+
     }
 }
