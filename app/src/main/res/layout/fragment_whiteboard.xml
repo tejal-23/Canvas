@@ -30,17 +30,19 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
 
-        <Button
+        <ImageButton
             android:id="@+id/btnUndo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/undo"
             android:text="Undo"/>
 
-        <Button
+        <ImageButton
             android:id="@+id/btnRedo"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Redo"/>
+            android:background="@drawable/redo"
+            />
 
         <Button
             android:id="@+id/btnClear"
@@ -54,10 +56,11 @@
             android:layout_height="wrap_content"
             android:text="Shape"/>
 
-        <Button
+        <ImageButton
             android:id="@+id/btnPen"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:background="@drawable/pen"
             android:text="Pen"/>
 
         <Button
